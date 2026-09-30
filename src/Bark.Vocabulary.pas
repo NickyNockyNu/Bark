@@ -238,12 +238,12 @@ begin
   begin
     for var c in AText do
     begin
-      if c = ' ' then
-        StrPiece := 'Ġ'
-      else
-        StrPiece := c;
+      StrPiece := c;
 
       ID := FindToken(StrPiece);
+
+      if (ID = -1) and (c = ' ') then
+        ID := FindToken('Ġ');
 
       if ID <> -1 then
       begin

@@ -5,7 +5,8 @@ unit Bark.Model;
 interface
 
 uses
-  Bark.Types;
+  Bark.Types,
+  Bark.Vocabulary;
 
 type
   TModelConfig = packed record
@@ -24,6 +25,8 @@ type
     FWeights: TModelWeights;
     FLoaded:  Boolean;
 
+    FVocabulary: TVocabulary;
+
     function QuantizeFloatToQ8(Source: PSingle; InDim, OutDim: Integer): TWeightTensor;
   public
     constructor Create;
@@ -31,9 +34,12 @@ type
 
     function LoadFromBIN(const AFileName: String): Boolean;
 
-    property Config:  TModelConfig  read FConfig;
-    property Weights: TModelWeights read FWeights;
-    property Loaded:  Boolean       read FLoaded;
+    procedure PrintSummary;
+
+    property Config:     TModelConfig  read FConfig;
+    property Weights:    TModelWeights read FWeights;
+    property Loaded:     Boolean       read FLoaded;
+    property Vocabulary: TVocabulary   read FVocabulary;
   end;
 
 implementation
@@ -43,6 +49,8 @@ begin
   inherited;
 
   FLoaded := False;
+
+  FVocabulary := TVocabulary.Create;
 end;
 
 destructor TTransformerModel.Destroy;
@@ -53,6 +61,8 @@ begin
   FWeights.RmsFinalWeight := nil;
   FWeights.Layers         := nil;
   FWeights.Wcls.Blocks    := nil;
+
+  FVocabulary.Free;
 
   inherited;
 end;
@@ -150,24 +160,30 @@ begin
     SetLength(FWeights.Layers,         FConfig.NLayers);
 
     BlockRead(F, FWeights.TokenEmbedding[0], Length(FWeights.TokenEmbedding) * SizeOf(Single));
-    BlockRead(F, FWeights.RmsAttWeight  [0], Length(FWeights.RmsAttWeight)   * SizeOf(Single));
+    BlockRead(F, FWeights.RmsAttWeight[0],   Length(FWeights.RmsAttWeight)   * SizeOf(Single));
 
     for var i := 0 to FConfig.NLayers - 1 do
-    begin
       FWeights.Layers[i].Wq := ReadAndQuantize(FConfig.Dim, FConfig.Dim);
+
+    for var i := 0 to FConfig.NLayers - 1 do
       FWeights.Layers[i].Wk := ReadAndQuantize(FConfig.Dim, KvDim);
+
+    for var i := 0 to FConfig.NLayers - 1 do
       FWeights.Layers[i].Wv := ReadAndQuantize(FConfig.Dim, KvDim);
+
+    for var i := 0 to FConfig.NLayers - 1 do
       FWeights.Layers[i].Wo := ReadAndQuantize(FConfig.Dim, FConfig.Dim);
-    end;
 
     BlockRead(F, FWeights.RmsFfnWeight[0], Length(FWeights.RmsFfnWeight) * SizeOf(Single));
 
     for var i := 0 to FConfig.NLayers - 1 do
-    begin
-      FWeights.Layers[i].W1 := ReadAndQuantize(FConfig.Dim,       FConfig.HiddenDim);
+      FWeights.Layers[i].W1 := ReadAndQuantize(FConfig.Dim, FConfig.HiddenDim);
+
+    for var i := 0 to FConfig.NLayers - 1 do
       FWeights.Layers[i].W2 := ReadAndQuantize(FConfig.HiddenDim, FConfig.Dim);
-      FWeights.Layers[i].W3 := ReadAndQuantize(FConfig.Dim,       FConfig.HiddenDim);
-    end;
+
+    for var i := 0 to FConfig.NLayers - 1 do
+      FWeights.Layers[i].W3 := ReadAndQuantize(FConfig.Dim, FConfig.HiddenDim);
 
     BlockRead(F, FWeights.RmsFinalWeight[0], FConfig.Dim * SizeOf(Single));
 
@@ -176,6 +192,9 @@ begin
     else
       FWeights.Wcls := QuantizeFloatToQ8(@FWeights.TokenEmbedding[0], FConfig.Dim, ActualVocab);
 
+    if not FVocabulary.LoadFromFile('tokenizer.bin', FConfig.VocabSize) then
+      Exit;
+
     FLoaded := True;
     Result  := True;
   finally
@@ -183,5 +202,17 @@ begin
     FloatBuf := nil;
   end;
 end;
+
+procedure TTransformerModel.PrintSummary;
+begin
+  Writeln('          Dimensions: ', FConfig.Dim);
+  Writeln('   Hidden Dimensions: ', FConfig.HiddenDim);
+  Writeln('              Layers: ', FConfig.NLayers);
+  Writeln('     Attention Heads: ', FConfig.NHeads);
+  Writeln('            KV Heads: ', FConfig.NKVHeads);
+  Writeln('     Vocabulary Size: ', Abs(FConfig.VocabSize));
+  Writeln(' Max Sequence Length: ', FConfig.SeqLen);
+end;
+
 
 end.

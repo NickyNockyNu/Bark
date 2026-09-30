@@ -39,6 +39,7 @@
 #Linux64/
 
 bin/
+dpr/
 
 # Delphi compiler-generated binaries (safe to delete)
 *.bpl
