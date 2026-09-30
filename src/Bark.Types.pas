@@ -4,6 +4,10 @@ unit Bark.Types;
 
 interface
 
+type
+  TIntegerArray = array of Integer;
+  TStringArray  = array of String;
+
 implementation
 
 end.

@@ -74,6 +74,8 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\src\Bark.Types.pas"/>
+        <DCCReference Include="..\src\Bark.Vocabulary.pas"/>
         <None Include="..\src\Bark.Options.inc"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
