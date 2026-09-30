@@ -27,7 +27,7 @@ type
 
     FVocabulary: TVocabulary;
 
-    function QuantizeFloatToQ8(Source: PSingle; InDim, OutDim: Integer): TWeightTensor;
+    function QuantizeFloatToQ8(ASource: PSingle; AInDim, AOutDim: Integer): TWeightTensor;
   public
     constructor Create;
     destructor  Destroy; override;
@@ -67,7 +67,7 @@ begin
   inherited;
 end;
 
-function TTransformerModel.QuantizeFloatToQ8(Source: PSingle; InDim, OutDim: Integer): TWeightTensor;
+function TTransformerModel.QuantizeFloatToQ8(ASource: PSingle; AInDim, AOutDim: Integer): TWeightTensor;
 var
   Total:     Integer;
   NumBlocks: Integer;
@@ -76,10 +76,10 @@ var
   Scale:     Single;
   Offset:    Integer;
 begin
-  Result.InDim  := InDim;
-  Result.OutDim := OutDim;
+  Result.InDim  := AInDim;
+  Result.OutDim := AOutDim;
 
-  Total     := OutDim * InDim;
+  Total     := AOutDim * AInDim;
   NumBlocks := Total div 32;
 
   SetLength(Result.Blocks, NumBlocks);
@@ -92,7 +92,7 @@ begin
 
     for var j := 0 to 31 do
     begin
-      Val := Abs(Source[Offset + j]);
+      Val := Abs(ASource[Offset + j]);
 
       if Val > MaxVal then
         MaxVal := Val;
@@ -107,7 +107,7 @@ begin
 
     for var j := 0 to 31 do
     begin
-      Val := Source[Offset + J];
+      Val := ASource[Offset + J];
 
       Result.Blocks[i].QS[j] := Round(Val / Scale);
     end;
