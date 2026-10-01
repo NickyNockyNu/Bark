@@ -21,28 +21,30 @@ type
 
   TTransformerModel = class
   private
-    FConfig:  TModelConfig;
-    FWeights: TModelWeights;
-    FLoaded:  Boolean;
-
+    FLoaded:     Boolean;
     FVocabulary: TVocabulary;
 
     function QuantizeFloatToQ8(ASource: PSingle; AInDim, AOutDim: Integer): TWeightTensor;
   public
+    Config:  TModelConfig;
+    Weights: TModelWeights;
+
     constructor Create;
     destructor  Destroy; override;
 
-    function LoadFromBIN(const AFileName: String): Boolean;
+    function LoadFromBIN (const AFileName: String): Boolean;
+    function LoadFromGGUF(const AFileName: String): Boolean;
 
     procedure PrintSummary;
 
-    property Config:     TModelConfig  read FConfig;
-    property Weights:    TModelWeights read FWeights;
     property Loaded:     Boolean       read FLoaded;
     property Vocabulary: TVocabulary   read FVocabulary;
   end;
 
 implementation
+
+uses
+  Bark.Model.GGUF;
 
 constructor TTransformerModel.Create;
 begin
@@ -55,12 +57,12 @@ end;
 
 destructor TTransformerModel.Destroy;
 begin
-  FWeights.TokenEmbedding := nil;
-  FWeights.RmsAttWeight   := nil;
-  FWeights.RmsFfnWeight   := nil;
-  FWeights.RmsFinalWeight := nil;
-  FWeights.Layers         := nil;
-  FWeights.Wcls.Blocks    := nil;
+  Weights.TokenEmbedding := nil;
+  Weights.RmsAttWeight   := nil;
+  Weights.RmsFfnWeight   := nil;
+  Weights.RmsFinalWeight := nil;
+  Weights.Layers         := nil;
+  Weights.Wcls.Blocks    := nil;
 
   FVocabulary.Free;
 
@@ -146,53 +148,53 @@ begin
     Exit;
 
   try
-    BlockRead(F, FConfig, SizeOf(TModelConfig));
+    BlockRead(F, Config, SizeOf(TModelConfig));
 
-    SharedWeights     := FConfig.VocabSize > 0;
-    ActualVocab       := Abs(FConfig.VocabSize);
-    FConfig.VocabSize := ActualVocab;
-    KvDim             := (FConfig.Dim * FConfig.NKVHeads) div FConfig.NHeads;
+    SharedWeights    := Config.VocabSize > 0;
+    ActualVocab      := Abs(Config.VocabSize);
+    Config.VocabSize := ActualVocab;
+    KvDim            := (Config.Dim * Config.NKVHeads) div Config.NHeads;
 
-    SetLength(FWeights.TokenEmbedding, NativeInt(ActualVocab)     * FConfig.Dim);
-    SetLength(FWeights.RmsAttWeight,   NativeInt(FConfig.NLayers) * FConfig.Dim);
-    SetLength(FWeights.RmsFfnWeight,   NativeInt(FConfig.NLayers) * FConfig.Dim);
-    SetLength(FWeights.RmsFinalWeight, FConfig.Dim);
-    SetLength(FWeights.Layers,         FConfig.NLayers);
+    SetLength(Weights.TokenEmbedding, NativeInt(ActualVocab)    * Config.Dim);
+    SetLength(Weights.RmsAttWeight,   NativeInt(Config.NLayers) * Config.Dim);
+    SetLength(Weights.RmsFfnWeight,   NativeInt(Config.NLayers) * Config.Dim);
+    SetLength(Weights.RmsFinalWeight, Config.Dim);
+    SetLength(Weights.Layers,         Config.NLayers);
 
-    BlockRead(F, FWeights.TokenEmbedding[0], Length(FWeights.TokenEmbedding) * SizeOf(Single));
-    BlockRead(F, FWeights.RmsAttWeight[0],   Length(FWeights.RmsAttWeight)   * SizeOf(Single));
+    BlockRead(F, Weights.TokenEmbedding[0], Length(Weights.TokenEmbedding) * SizeOf(Single));
+    BlockRead(F, Weights.RmsAttWeight[0],   Length(Weights.RmsAttWeight)   * SizeOf(Single));
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].Wq := ReadAndQuantize(FConfig.Dim, FConfig.Dim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].Wq := ReadAndQuantize(Config.Dim, Config.Dim);
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].Wk := ReadAndQuantize(FConfig.Dim, KvDim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].Wk := ReadAndQuantize(Config.Dim, KvDim);
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].Wv := ReadAndQuantize(FConfig.Dim, KvDim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].Wv := ReadAndQuantize(Config.Dim, KvDim);
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].Wo := ReadAndQuantize(FConfig.Dim, FConfig.Dim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].Wo := ReadAndQuantize(Config.Dim, Config.Dim);
 
-    BlockRead(F, FWeights.RmsFfnWeight[0], Length(FWeights.RmsFfnWeight) * SizeOf(Single));
+    BlockRead(F, Weights.RmsFfnWeight[0], Length(Weights.RmsFfnWeight) * SizeOf(Single));
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].W1 := ReadAndQuantize(FConfig.Dim, FConfig.HiddenDim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].W1 := ReadAndQuantize(Config.Dim, Config.HiddenDim);
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].W2 := ReadAndQuantize(FConfig.HiddenDim, FConfig.Dim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].W2 := ReadAndQuantize(Config.HiddenDim, Config.Dim);
 
-    for var i := 0 to FConfig.NLayers - 1 do
-      FWeights.Layers[i].W3 := ReadAndQuantize(FConfig.Dim, FConfig.HiddenDim);
+    for var i := 0 to Config.NLayers - 1 do
+      Weights.Layers[i].W3 := ReadAndQuantize(Config.Dim, Config.HiddenDim);
 
-    BlockRead(F, FWeights.RmsFinalWeight[0], FConfig.Dim * SizeOf(Single));
+    BlockRead(F, Weights.RmsFinalWeight[0], Config.Dim * SizeOf(Single));
 
     if not SharedWeights then
-      FWeights.Wcls := ReadAndQuantize(FConfig.Dim, ActualVocab)
+      Weights.Wcls := ReadAndQuantize(Config.Dim, ActualVocab)
     else
-      FWeights.Wcls := QuantizeFloatToQ8(@FWeights.TokenEmbedding[0], FConfig.Dim, ActualVocab);
+      Weights.Wcls := QuantizeFloatToQ8(@Weights.TokenEmbedding[0], Config.Dim, ActualVocab);
 
-    if not FVocabulary.LoadFromFile('tokenizer.bin', FConfig.VocabSize) then
+    if not FVocabulary.LoadFromFile('tokenizer.bin', Config.VocabSize) then
       Exit;
 
     FLoaded := True;
@@ -203,15 +205,28 @@ begin
   end;
 end;
 
+function TTransformerModel.LoadFromGGUF(const AFileName: String): Boolean;
+var
+  Reader: TGGUFReader;
+begin
+  Reader := TGGUFReader.Create;
+  try
+    FLoaded := Reader.Load(AFileName, Self);
+    Result  := FLoaded;
+  finally
+    Reader.Free;
+  end;
+end;
+
 procedure TTransformerModel.PrintSummary;
 begin
-  Writeln('          Dimensions: ', FConfig.Dim);
-  Writeln('   Hidden Dimensions: ', FConfig.HiddenDim);
-  Writeln('              Layers: ', FConfig.NLayers);
-  Writeln('     Attention Heads: ', FConfig.NHeads);
-  Writeln('            KV Heads: ', FConfig.NKVHeads);
-  Writeln('     Vocabulary Size: ', Abs(FConfig.VocabSize));
-  Writeln(' Max Sequence Length: ', FConfig.SeqLen);
+  Writeln('          Dimensions: ', Config.Dim);
+  Writeln('   Hidden Dimensions: ', Config.HiddenDim);
+  Writeln('              Layers: ', Config.NLayers);
+  Writeln('     Attention Heads: ', Config.NHeads);
+  Writeln('            KV Heads: ', Config.NKVHeads);
+  Writeln('     Vocabulary Size: ', Abs(Config.VocabSize));
+  Writeln(' Max Sequence Length: ', Config.SeqLen);
 end;
 
 

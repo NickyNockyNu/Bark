@@ -13,6 +13,7 @@ procedure RMSNorm(AOutVec, AInVec, AWeight: PSingle; ASize: Integer);
 procedure ApplyRoPE(Q, K: PSingle; APos: Integer; ADim, AHeadSize, ANHeads, ANKVHeads: Integer);
 procedure Accumulate(AOutVec, AInVec: PSingle; ASize: Integer);
 function SiLU(X: Single): Single; inline;
+function HalfToFloat(H: Word): Single;
 
 implementation
 
@@ -151,5 +152,43 @@ function SiLU(X: Single): Single;
 begin
   Result := X / (1 + Exp(-X));
 end;
+
+function HalfToFloat(H: Word): Single;
+var
+  Sign: Cardinal;
+  Exp:  Cardinal;
+  Mant: Cardinal;
+  U32:  Cardinal;
+begin
+  Sign := (H and $8000) shl 16;
+  Exp  := (H and $7C00) shr 10;
+  Mant := (H and $03FF);
+
+  if Exp = 0 then
+  begin
+    if Mant = 0 then
+      U32 := Sign
+    else
+    begin
+      while (Mant and $0400) = 0 do
+      begin
+        Mant := Mant shl 1;
+        Dec(Exp);
+      end;
+
+      Inc(Exp);
+
+      Mant := Mant and not UInt32($0400);
+      U32  := Sign or ((Exp + (127 - 15)) shl 23) or (Mant shl 13);
+    end;
+  end
+  else if Exp = 31 then
+    U32 := Sign or $7F800000 or (Mant shl 13)
+  else
+    U32 := Sign or ((Exp + (127 - 15)) shl 23) or (Mant shl 13);
+
+  Result := PSingle(@U32)^;
+end;
+
 
 end.

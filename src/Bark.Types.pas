@@ -5,6 +5,7 @@ unit Bark.Types;
 interface
 
 type
+  TByteArray    = array of Byte;
   TIntegerArray = array of Integer;
   TStringArray  = array of String;
   TSingleArray  = array of Single;

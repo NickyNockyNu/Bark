@@ -14,12 +14,14 @@ type
     Next:  Integer;
   end;
 
+  TTokens = array of TTokenEntry;
+
   TVocabulary = class
   const
     HASH_SIZE = 65536;
   private
-    FEntries: array of TTokenEntry;
-    FBuckets: array of Integer;
+    FEntries: TTokens;
+    FBuckets: TIntegerArray;
 
     FSize:   Integer;
     FLoaded: Boolean;
@@ -201,16 +203,20 @@ begin
   begin
     S := FEntries[ATokenID].Text;
 
-    if S = '<0x0A>' then
+    if (S = '<0x0A>') or (S = 'Ċ') then
       Exit(#13#10);
 
     SetLength(Result, Length(S));
 
     for var i := 1 to Length(S) do
+    begin
       if (S[i] = 'Ġ') or (S[i] = ' ') then
         Result[i] := ' '
+      else if S[i] = 'Ċ' then
+        Result[i] := #10
       else
         Result[i] := S[i];
+    end;
   end
   else
     Result := '';
