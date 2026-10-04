@@ -7,13 +7,13 @@ interface
 uses
   Bark.Types;
 
-function Power(const ABase, AExponent: Double): Double;
+function  Power(const ABase, AExponent: Double): Double;
 procedure Softmax(AValues: PSingle; ASize: Integer);
 procedure RMSNorm(AOutVec, AInVec, AWeight: PSingle; ASize: Integer);
-procedure ApplyRoPE(Q, K: PSingle; APos: Integer; ADim, AHeadSize, ANHeads, ANKVHeads: Integer);
+procedure ApplyRoPE(Q, K: PSingle; APos: Integer; ADim, AHeadSize, ANHeads, ANKVHeads: Integer; ARopeFreqBase: Single);
 procedure Accumulate(AOutVec, AInVec: PSingle; ASize: Integer);
-function SiLU(X: Single): Single; inline;
-function HalfToFloat(H: Word): Single;
+function  SiLU(X: Single): Single; inline;
+function  HalfToFloat(H: Word): Single;
 
 implementation
 
@@ -89,7 +89,7 @@ begin
     AOutVec[i] := AInVec[i] * Scale * AWeight[i];
 end;
 
-procedure ApplyRoPE(Q, K: PSingle; APos: Integer; ADim, AHeadSize, ANHeads, ANKVHeads: Integer);
+procedure ApplyRoPE(Q, K: PSingle; APos: Integer; ADim, AHeadSize, ANHeads, ANKVHeads: Integer; ARopeFreqBase: Single);
 var
   HeadOffset:   Integer;
   HeadDimIndex: Integer;
@@ -105,7 +105,7 @@ begin
     begin
       HeadDimIndex := i * 2;
 
-      Freq := 1.0 / Power(10000, HeadDimIndex / AHeadSize);
+      Freq := 1 / Power(ARopeFreqBase, HeadDimIndex / AHeadSize);
       Val  := APos * Freq;
 
       Fcr := Cos(Val);
@@ -127,7 +127,7 @@ begin
     begin
       HeadDimIndex := i * 2;
 
-      Freq := 1.0 / Power(10000, HeadDimIndex / AHeadSize);
+      Freq := 1 / Power(ARopeFreqBase, HeadDimIndex / AHeadSize);
       Val  := APos * Freq;
 
       Fcr := Cos(Val);

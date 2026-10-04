@@ -26,6 +26,7 @@ type
   TLayer = record
     Wq, Wk, Wv, Wo: TWeightTensor;
     W1, W2, W3:     TWeightTensor;
+    Bq, Bk, Bv:     TSingleArray;
   end;
 
   TLayers = array of TLayer;

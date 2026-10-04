@@ -101,7 +101,8 @@ begin
     SetLength(FState.KeyCache,   NativeInt(NLayers) * SeqLen * KvDim);
     SetLength(FState.ValueCache, NativeInt(NLayers) * SeqLen * KvDim);
 
-    SetLength(FCandidates, VocabSize);
+    SetLength(FState.Logits, VocabSize);
+    SetLength(FCandidates,   VocabSize);
   end;
 end;
 
@@ -127,10 +128,7 @@ end;
 
 function TInferenceEngine.Forward(AToken: Integer; APos: Integer): PSingle;
 var
-  C: TModelConfig;
-  W: TModelWeights;
-  S: TRunState;
-
+  C:            TModelConfig;
   HeadSize:     Integer;
   KvDim, KvMul: Integer;
   CacheOffset:  Integer;
@@ -143,29 +141,41 @@ var
   PValRow:      PSingle;
 begin
   C := FModel.Config;
-  W := FModel.Weights;
-  S := FState;
+
+  if (AToken < 0) or (AToken >= C.VocabSize) then
+    Exit(@FState.Logits[0]);
 
   HeadSize := C.Dim div C.NHeads;
   KvDim    := (C.Dim * C.NKVHeads) div C.NHeads;
   KvMul    := C.NHeads div C.NKVHeads;
 
-  Move(W.TokenEmbedding[AToken * C.Dim], S.X[0], C.Dim * SizeOf(Single));
+  Move(FModel.Weights.TokenEmbedding[NativeInt(AToken) * C.Dim], FState.X[0], C.Dim * SizeOf(Single));
 
   for var l := 0 to C.NLayers - 1 do
   begin
-    RMSNorm(@S.Xb[0], @S.X[0], @W.RmsAttWeight[l * C.Dim], C.Dim);
+    RMSNorm(@FState.Xb[0], @FState.X[0], @FModel.Weights.RmsAttWeight[l * C.Dim], C.Dim);
 
-    MatMul(@S.Q[0], @S.Xb[0], W.Layers[l].Wq);
-    MatMul(@S.K[0], @S.Xb[0], W.Layers[l].Wk);
-    MatMul(@S.V[0], @S.Xb[0], W.Layers[l].Wv);
+    MatMul(@FState.Q[0], @FState.Xb[0], FModel.Weights.Layers[l].Wq);
 
-    ApplyRoPE(@S.Q[0], @S.K[0], APos, C.Dim, HeadSize, C.NHeads, C.NKVHeads);
+    if Length(FModel.Weights.Layers[l].Bq) > 0 then
+      Accumulate(@FState.Q[0], @FModel.Weights.Layers[l].Bq[0], C.Dim);
+
+    MatMul(@FState.K[0], @FState.Xb[0], FModel.Weights.Layers[l].Wk);
+
+    if Length(FModel.Weights.Layers[l].Bk) > 0 then
+      Accumulate(@FState.K[0], @FModel.Weights.Layers[l].Bk[0], KvDim);
+
+    MatMul(@FState.V[0], @FState.Xb[0], FModel.Weights.Layers[l].Wv);
+
+    if Length(FModel.Weights.Layers[l].Bv) > 0 then
+      Accumulate(@FState.V[0], @FModel.Weights.Layers[l].Bv[0], KvDim);
+
+    ApplyRoPE(@FState.Q[0], @FState.K[0], APos, C.Dim, HeadSize, C.NHeads, C.NKVHeads, FModel.RopeFreqBase);
 
     CacheOffset := (l * C.SeqLen * KvDim) + (APos * KvDim);
 
-    Move(S.K[0], S.KeyCache[CacheOffset],   KvDim * SizeOf(Single));
-    Move(S.V[0], S.ValueCache[CacheOffset], KvDim * SizeOf(Single));
+    Move(FState.K[0], FState.KeyCache[CacheOffset],   KvDim * SizeOf(Single));
+    Move(FState.V[0], FState.ValueCache[CacheOffset], KvDim * SizeOf(Single));
 
     for var h := 0 to C.NHeads - 1 do
     begin
@@ -175,48 +185,48 @@ begin
 
       for var t := 0 to APos do
       begin
-        PKeyRow := @S.KeyCache[(l * C.SeqLen * KvDim) + (t * KvDim) + (KvHead * HeadSize)];
-        Score   := 0;
+        PKeyRow := @FState.KeyCache[(l * C.SeqLen * KvDim) + (t * KvDim) + (KvHead * HeadSize)];
+        Score   := 0.0;
 
         for var i := 0 to HeadSize - 1 do
-          Score := Score + (S.Q[HeadOffset + i] * PKeyRow[i]);
+          Score := Score + (FState.Q[HeadOffset + i] * PKeyRow[i]);
 
-        S.Att[AttOffset + t] := Score / Sqrt(HeadSize);
+        FState.Att[AttOffset + t] := Score / Sqrt(HeadSize);
       end;
 
-      Softmax(@S.Att[AttOffset], APos + 1);
+      Softmax(@FState.Att[AttOffset], APos + 1);
 
       for var i := 0 to HeadSize - 1 do
-        S.Xb[HeadOffset + i] := 0.0;
+        FState.Xb[HeadOffset + i] := 0.0;
 
       for var t := 0 to APos do
       begin
-        PValRow := @S.ValueCache[(l * C.SeqLen * KvDim) + (t * KvDim) + (KvHead * HeadSize)];
-        AttVal  := S.Att[AttOffset + t];
+        PValRow := @FState.ValueCache[(l * C.SeqLen * KvDim) + (t * KvDim) + (KvHead * HeadSize)];
+        AttVal  := FState.Att[AttOffset + t];
 
         for var i := 0 to HeadSize - 1 do
-          S.Xb[HeadOffset + i] := S.Xb[HeadOffset + i] + (AttVal * PValRow[i]);
+          FState.Xb[HeadOffset + i] := FState.Xb[HeadOffset + i] + (AttVal * PValRow[i]);
       end;
     end;
 
-    MatMul(@S.Xb2[0], @S.Xb[0], W.Layers[l].Wo);
-    Accumulate(@S.X[0], @S.Xb2[0], C.Dim);
+    MatMul(@FState.Xb2[0], @FState.Xb[0], FModel.Weights.Layers[l].Wo);
+    Accumulate(@FState.X[0], @FState.Xb2[0], C.Dim);
 
-    RMSNorm(@S.Xb[0], @S.X[0], @W.RmsFfnWeight[l * C.Dim], C.Dim);
-    MatMul(@S.Hb[0],  @S.Xb[0], W.Layers[l].W1);
-    MatMul(@S.Hb2[0], @S.Xb[0], W.Layers[l].W3);
+    RMSNorm(@FState.Xb[0], @FState.X[0], @FModel.Weights.RmsFfnWeight[l * C.Dim], C.Dim);
+    MatMul(@FState.Hb[0],  @FState.Xb[0], FModel.Weights.Layers[l].W1);
+    MatMul(@FState.Hb2[0], @FState.Xb[0], FModel.Weights.Layers[l].W3);
 
     for var i := 0 to C.HiddenDim - 1 do
-      S.Hb[i] := SiLU(S.Hb[i]) * S.Hb2[i];
+      FState.Hb[i] := SiLU(FState.Hb[i]) * FState.Hb2[i];
 
-    MatMul(@S.Xb[0], @S.Hb[0], W.Layers[l].W2);
-    Accumulate(@S.X[0], @S.Xb[0], C.Dim);
+    MatMul(@FState.Xb[0], @FState.Hb[0], FModel.Weights.Layers[l].W2);
+    Accumulate(@FState.X[0], @FState.Xb[0], C.Dim);
   end;
 
-  RMSNorm(@S.X[0], @S.X[0], @W.RmsFinalWeight[0], C.Dim);
-  MatMul(@S.Logits[0], @S.X[0], W.Wcls);
+  RMSNorm(@FState.X[0], @FState.X[0], @FModel.Weights.RmsFinalWeight[0], C.Dim);
+  MatMul(@FState.Logits[0], @FState.X[0], FModel.Weights.Wcls);
 
-  Result := @S.Logits[0];
+  Result := @FState.Logits[0];
 end;
 
 function TInferenceEngine.SampleGreedy(ALogits: PSingle): Integer;
@@ -251,6 +261,9 @@ var
   Count:          Integer;
 begin
   VocabSize := FModel.Config.VocabSize;
+
+  if Length(FCandidates) < VocabSize then
+    SetLength(FCandidates, VocabSize);
 
   if (ARepetitionPenalty <> 1) and (Length(ARecentTokens) > 0) then
     for TokId in ARecentTokens do

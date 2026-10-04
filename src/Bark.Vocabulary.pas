@@ -185,11 +185,11 @@ begin
   for var i := 0 to FSize - 1 do
     with FEntries[i] do
     begin
-      Text  := AVocabArray[I];
-      Score :=  0;
+      Text  := AVocabArray[i];
+      Score := -i;
       Next  := -1;
 
-      AddToHash(I);
+      AddToHash(i);
     end;
 
   FLoaded := True;
@@ -222,14 +222,49 @@ begin
     Result := '';
 end;
 
+function PosEx(const ASubStr, AStr: String; AStart: Integer): Integer;
+var
+  SubLen: Integer;
+  StrLen: Integer;
+  Match:  Boolean;
+begin
+  SubLen := Length(ASubStr);
+  StrLen := Length(AStr);
+
+  if (SubLen = 0) or (AStart < 1) or (AStart > StrLen) then
+    Exit(0);
+
+  for var i := AStart to StrLen - SubLen + 1 do
+  begin
+    Match := True;
+
+    for var j := 1 to SubLen do
+    begin
+      if AStr[i + j - 1] <> ASubStr[j] then
+      begin
+        Match := False;
+        Break;
+      end;
+    end;
+
+    if Match then
+      Exit(i);
+  end;
+
+  Result := 0;
+end;
+
 function TVocabulary.Encode(const AText: string; AAddBos: Boolean): TIntegerArray;
 var
+  ID, i:     Integer;
   Count:     Integer;
   BestIdx:   Integer;
-  ID:        Integer;
   BestScore: Single;
   MergedStr: String;
   StrPiece:  String;
+  C:         Char;
+  EndTag:    Integer;
+  Tag:       String;
 begin
   SetLength(Result, (Length(AText) * 3) + 2);
   Count := 0;
@@ -242,14 +277,50 @@ begin
 
   if Length(AText) > 0 then
   begin
-    for var c in AText do
+    i := 1;
+
+    while i <= Length(AText) do
     begin
-      StrPiece := c;
+      if (AText[i] = '<') and (i < Length(AText)) and (AText[i + 1] = '|') then
+      begin
+        EndTag := PosEx('|>', AText, i);
+
+        if EndTag > 0 then
+        begin
+          Tag := Copy(AText, i, (EndTag + 2) - i);
+          ID  := FindToken(Tag);
+
+          if ID <> -1 then
+          begin
+            Result[Count] := ID;
+
+            Inc(Count);
+            i := EndTag + 2;
+
+            Continue;
+          end;
+        end;
+      end;
+
+      C := AText[i];
+
+      if C = #13 then
+      begin
+        Inc(i);
+        Continue;
+      end;
+
+      if C = ' ' then
+        StrPiece := 'Ġ'
+      else if C = #10 then
+        StrPiece := 'Ċ'
+      else
+        StrPiece := C;
 
       ID := FindToken(StrPiece);
 
-      if (ID = -1) and (c = ' ') then
-        ID := FindToken('Ġ');
+      if (ID = -1) and (C = ' ') then
+        ID := FindToken(' ');
 
       if ID <> -1 then
       begin
@@ -258,9 +329,11 @@ begin
       end
       else
       begin
-        Result[Count] := (Ord(c) and $FF) + 3;
+        Result[Count] := (Ord(C) and $FF) + 3;
         Inc(Count);
       end;
+
+      Inc(i);
     end;
 
     while True do
@@ -268,23 +341,22 @@ begin
       BestScore := -1e10;
       BestIdx   := -1;
 
-      for var i := 0 to Count - 2 do
+      for var j := 0 to Count - 2 do
       begin
-        MergedStr := FEntries[Result[i]].Text + FEntries[Result[i + 1]].Text;
-
-        ID := FindToken(MergedStr);
+        MergedStr := FEntries[Result[j]].Text + FEntries[Result[j + 1]].Text;
+        ID        := FindToken(MergedStr);
 
         if (ID <> -1) and (FEntries[ID].Score > BestScore) then
         begin
           BestScore := FEntries[ID].Score;
-          BestIdx   := i;
+          BestIdx   := j;
         end;
       end;
 
       if BestIdx = -1 then
         Break;
 
-      MergedStr := FEntries[Result[BestIdx]].Text + FEntries[Result[BestIdx + 1]].Text;
+      MergedStr       := FEntries[Result[BestIdx]].Text + FEntries[Result[BestIdx + 1]].Text;
       Result[BestIdx] := FindToken(MergedStr);
 
       if (Count - BestIdx - 2) > 0 then

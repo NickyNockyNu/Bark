@@ -21,8 +21,9 @@ type
 
   TTransformerModel = class
   private
-    FLoaded:     Boolean;
-    FVocabulary: TVocabulary;
+    FLoaded:       Boolean;
+    FVocabulary:   TVocabulary;
+    FRopeFreqBase: Single;
 
     function QuantizeFloatToQ8(ASource: PSingle; AInDim, AOutDim: Integer): TWeightTensor;
   public
@@ -39,6 +40,8 @@ type
 
     property Loaded:     Boolean       read FLoaded;
     property Vocabulary: TVocabulary   read FVocabulary;
+
+    property RopeFreqBase: Single read FRopeFreqBase write FRopeFreqBase;
   end;
 
 implementation
@@ -51,6 +54,8 @@ begin
   inherited;
 
   FLoaded := False;
+
+  FRopeFreqBase := 10000;
 
   FVocabulary := TVocabulary.Create;
 end;

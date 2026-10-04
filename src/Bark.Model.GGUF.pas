@@ -198,15 +198,22 @@ var
     TInfo:         TGGUFTensor;
     TotalElements: Integer;
     NumBlocks:     Integer;
-    ScaleH:        UInt16;
+    RawBytes:      TByteArray;
+    RawSize:       Int64;
+    PScale:        PWord;
+    PQS:           PShortInt;
+    PRaw:          PByte;
   begin
     FillChar(Result, SizeOf(TWeightTensor), 0);
 
     if not FindTensor(Name, TInfo) then
+    begin
+      // TODO: Error
+      Writeln('CRITICAL: Missing Tensor in GGUF: ', Name);
       Exit;
+    end;
 
     Seek(F, FDataOffset + TInfo.Offset);
-
     Result.InDim := TInfo.Dims[0];
 
     if TInfo.NDims > 1 then
@@ -219,14 +226,24 @@ var
 
     SetLength(Result.Blocks, NumBlocks);
 
+    RawSize := Int64(NumBlocks) * 34;
+    SetLength(RawBytes, RawSize);
+    BlockRead(F, RawBytes[0], RawSize);
+
+    PRaw := @RawBytes[0];
+
     for var b := 0 to NumBlocks - 1 do
     begin
-      BlockRead(F, ScaleH, SizeOf(UInt16));
+      PScale := PWord(PRaw);
+      PQS    := PShortInt(PRaw + 2);
 
-      Result.Blocks[b].Scale := HalfToFloat(ScaleH);
+      Result.Blocks[b].Scale := HalfToFloat(PScale^);
+      Move(PQS^, Result.Blocks[b].QS[0], 32);
 
-      BlockRead(F, Result.Blocks[b].QS[0], 32);
+      Inc(PRaw, 34);
     end;
+
+    RawBytes := nil;
   end;
 begin
   Result := False;
@@ -310,6 +327,13 @@ begin
         AModel.Config.SeqLen := U32Val;
       end
 
+      else if (Key = (Arch + '.rope.freq_base')) or (Key = 'rope.freq_base') then
+      begin
+        var F32Val: Single;
+        BlockRead(F, F32Val, SizeOf(Single));
+        AModel.RopeFreqBase := F32Val;
+      end
+
       else if (Key = 'tokenizer.ggml.tokens') and (ValType = GGUF_TYPE_ARRAY) then
       begin
         BlockRead(F, ItemType,   SizeOf(Cardinal));
@@ -364,10 +388,24 @@ begin
       if Info.TensorType = GGML_TYPE_F32 then
         BlockRead(F, AModel.Weights.TokenEmbedding[0], Length(AModel.Weights.TokenEmbedding) * SizeOf(Single))
 
+      else if Info.TensorType = GGML_TYPE_F16 then
+      begin
+        var TotalCount: Int64 := NativeInt(AModel.Config.VocabSize) * AModel.Config.Dim;
+        var HalfBuf: array of UInt16;
+
+        SetLength(HalfBuf, TotalCount);
+        BlockRead(F, HalfBuf[0], TotalCount * SizeOf(UInt16));
+
+        for var j := 0 to TotalCount - 1 do
+          AModel.Weights.TokenEmbedding[j] := HalfToFloat(HalfBuf[j]);
+
+        HalfBuf := nil;
+      end
+
       else if Info.TensorType = GGML_TYPE_Q8_0 then
       begin
         var NumBlocks: Int64 := (NativeInt(AModel.Config.VocabSize) * AModel.Config.Dim) div 32;
-        var HalfScale: UInt16;
+        var HalfScale: Word;
         var QS: array[0..31] of Int8;
 
         for var blockIdx := 0 to NumBlocks - 1 do
@@ -375,6 +413,7 @@ begin
           BlockRead(F, HalfScale, SizeOf(UInt16));
 
           var S := HalfToFloat(HalfScale);
+
           BlockRead(F, QS[0], 32);
 
           for var j := 0 to 31 do
@@ -389,6 +428,26 @@ begin
 
       LoadFloat1D('blk.' + LStr + '.attn_norm.weight', @AModel.Weights.RmsAttWeight[l * AModel.Config.Dim], AModel.Config.Dim);
       LoadFloat1D('blk.' + LStr + '.ffn_norm.weight',  @AModel.Weights.RmsFfnWeight[l * AModel.Config.Dim], AModel.Config.Dim);
+
+      var KvDim := (AModel.Config.Dim * AModel.Config.NKVHeads) div AModel.Config.NHeads;
+
+      if FindTensor('blk.' + LStr + '.attn_q.bias', Info) then
+      begin
+        SetLength(AModel.Weights.Layers[l].Bq, AModel.Config.Dim);
+        LoadFloat1D('blk.' + LStr + '.attn_q.bias', @AModel.Weights.Layers[l].Bq[0], AModel.Config.Dim);
+      end;
+
+      if FindTensor('blk.' + LStr + '.attn_k.bias', Info) then
+      begin
+        SetLength(AModel.Weights.Layers[l].Bk, KvDim);
+        LoadFloat1D('blk.' + LStr + '.attn_k.bias', @AModel.Weights.Layers[l].Bk[0], KvDim);
+      end;
+
+      if FindTensor('blk.' + LStr + '.attn_v.bias', Info) then
+      begin
+        SetLength(AModel.Weights.Layers[l].Bv, KvDim);
+        LoadFloat1D('blk.' + LStr + '.attn_v.bias', @AModel.Weights.Layers[l].Bv[0], KvDim);
+      end;
 
       AModel.Weights.Layers[l].Wq := LoadQ8Tensor('blk.' + LStr + '.attn_q.weight');
       AModel.Weights.Layers[l].Wk := LoadQ8Tensor('blk.' + LStr + '.attn_k.weight');
